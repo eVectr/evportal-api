@@ -1,32 +1,52 @@
-
+//const mongoose = require('mongoose').set('debug', true);
 const mongoose = require('mongoose');
 const express = require('express');
 //const nodemailer = require('nodemailer');
 const mysql = require('mysql');
+const socketIo = require("socket.io");
 //const fs = require('fs');
 
 // Load the project root .env config vars
 const dotenv = require('dotenv');
+var jwt = require('jsonwebtoken');
 dotenv.config();
 
 console.log(`Starting EV-Portal on Port ${process.env.PORT}`);
-
-var jwt = require('jsonwebtoken');
-require('./db/evcontactform.js');
 
 var app = express();
 var bodyParser = require('body-parser');
 const server = require('http').createServer(app);
 
+// Socket IO
+const io = socketIo(server);
+io.on("connection", socket => {
+    console.log("New client connected");
+
+    //Here we listen on a new namespace called "incoming data"
+    socket.on("incoming data", (data)=>{
+        //Here we broadcast it out to all other sockets EXCLUDING the socket which sent us the data
+       socket.broadcast.emit("outgoing data", {num: data});
+    });
+
+    //A special namespace "disconnect" for when a client disconnects
+    socket.on("disconnect", () => console.log("Client disconnected"));
+});
+
 app.use(express.static('uploads'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.disable('x-powered-by'); // Do not announce we are using express
 
 // Mongo Connection
 mongoose.connect(process.env.MONGO_CONN_STR, (err) => {
 	if (err) throw err
 	console.log('Mongoose connected')
 });
+
+
+// Mongo Schemas
+require('./db/evcontactform.js');
+require('./db/evcontactreply.js');
 
 // MySQL Conneciton
 var mysqlConn = mysql.createConnection({
@@ -36,10 +56,6 @@ var mysqlConn = mysql.createConnection({
 	password : process.env.MYSQL_PASS,
 });
 
-//api(app)
-
-app.disable('x-powered-by'); // Do not announce we are using express
-
 app.use((req, res, next) => {
 	res.setHeader('Access-Control-Allow-Origin', '*')
 	res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
@@ -47,22 +63,22 @@ app.use((req, res, next) => {
 	next();
 });
 
-app.get('/test', (req, res) => {
-	console.log("get test request");
-	var result = [
-		{ value: 'ocean', label: 'Ocean', color: '#00B8D9', isFixed: true },
-		{ value: 'blue', label: 'Blue', color: '#0052CC', isDisabled: true },
-		{ value: 'purple', label: 'Purple', color: '#5243AA' },
-		{ value: 'red', label: 'Red', color: '#FF5630', isFixed: true },
-		{ value: 'orange', label: 'Orange', color: '#FF8B00' },
-		{ value: 'yellow', label: 'Yellow', color: '#FFC400' },
-		{ value: 'green', label: 'Green', color: '#36B37E' },
-		{ value: 'forest', label: 'Forest', color: '#00875A' },
-		{ value: 'slate', label: 'Slate', color: '#253858' },
-		{ value: 'silver', label: 'Silver', color: '#666666' },
-	];
-	res.status(200).send(result);
-});
+// CHECK AUTH FUNCTION
+function checkAuth(req, res, next) {
+	var token = req.headers['x-access-token'];
+	jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+		if (err) {
+			console.log("A token has failed authentication for the request.");
+			return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
+		}
+		return next();
+	});
+	
+	// IF A USER ISN'T LOGGED IN return 401 status code
+	//res.status(401).send({ auth: false, message: 'Invalid session' });
+	return false;
+}
+
 
 // LOGIN ROUTE
 app.post('/login', (req, res) => {
@@ -129,22 +145,7 @@ app.post('/login', (req, res) => {
 	});
 });
 
-function checkAuth(req, res, next) {
-	var token = req.headers['x-access-token'];
-	jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
-		if (err) {
-			console.log("A token has failed authentication for the request.");
-			return res.status(401).send({ auth: false, message: 'Failed to authenticate token.' });
-		}
-		return next();
-	});
-	
-	// IF A USER ISN'T LOGGED IN return 401 status code
-	//res.status(401).send({ auth: false, message: 'Invalid session' });
-	return false;
-}
-
-// AUTH CHECK --- REMOVE THIS ROUTE AND FUNCTIONALITY ON FRONT-END (now handled by checkAuth middleware)
+// AUTH CHECK
 app.post('/auth/check', checkAuth, (req,res) => {
 	console.log("RECEIVED AUTH CHECK POST");
 	var token = req.headers['x-access-token'];
@@ -155,7 +156,7 @@ app.post('/auth/check', checkAuth, (req,res) => {
 	});
 });
 
-// USERS
+// USERS - ALL USERS
 app.get('/getusers', checkAuth, (req, res) => {
 	console.log("GET REQUEST /getusers")
 	// MySQL User Select
@@ -198,6 +199,8 @@ app.get('/users/role', checkAuth, (req, res) => {
 	});
 	return;
 });
+
+// GET SINGLE USER
 app.get('/getuser', checkAuth, (req,res) => {
 	console.log("GET REQUEST /getuser");
 	if(isNaN(req.query.id)) {
@@ -230,6 +233,7 @@ app.get('/getuser', checkAuth, (req,res) => {
 	});
 });
 
+// GET SINGLE USER'S ROLE
 app.get('/getuserroles', checkAuth, (req, res) => {
 	console.log("GET REQUEST /getuserroles")
 	// MySQL User Select
@@ -237,13 +241,6 @@ app.get('/getuserroles', checkAuth, (req, res) => {
 		res.send({ error: "id parameter not numeric" });
 		return false;
 	}
-
-
-
-	//var sql = "SELECT * FROM user_roles where user_id = "+req.query.id;
-	
-	//var sql = "SELECT role_types.name AS user, role_types.role_name AS favorite FROM user_roles JOIN role_types ON user_roles.role_id = role_types.id";
-	
 
 	var sql = "SELECT role_types.role_name FROM role_types INNER JOIN user_roles ON role_types.id = user_roles.role_id";
 	mysqlConn.query(sql, function(err, rows, fields) {
@@ -302,7 +299,7 @@ app.post('/user/setrole', checkAuth, (req,res) => {
 
 // GET ALL TICKETS
 app.get('/support/tickets', checkAuth, (req, res) => {
-	ContactForm.find({}).sort('date').exec(function (err, docs) {
+	ContactForm.find({Status: "Open"}).sort('date').exec(function (err, docs) {
 		if (err) {
 			console.log('error')
 			res.send(err)
@@ -315,33 +312,38 @@ app.get('/support/tickets', checkAuth, (req, res) => {
 
 // GET SINGLE TICKET
 app.get('/support/ticket', checkAuth, (req, res) => {
-	ContactForm.find({'caseNo':req.query.caseNo}, function (err, docs) {
+	ContactForm.find({'caseNo':req.query.caseNo}, function (err, ticketData) {
 		if (err) {
-			console.log('error')
-			res.send(err)
+			console.log('error');
+			res.send(err);
 		} else {
-			//console.log(docs);
-			var user = {};
-			if(docs[0].Name === undefined && docs[0].UID !== undefined) {
-				// Lets pull in name and shit from MySQL until it's part of the mongo data
-				var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `user_id` = "+docs[0].UID;
-				mysqlConn.query(sql, function(err, userRow, fields) {
-					if(err) {
-						console.log(err);
-						return false;
+			// GET TICKET REPLIES
+			console.log(ticketData);
+			ContactReply.find({'caseNo':req.query.caseNo}, function (err, replyData) {
+				if (err) {
+					console.log('error');
+					res.send(err);
+				} else {
+					var user = {};
+					if(ticketData[0].Name === undefined && ticketData[0].UID !== undefined) {
+						// Lets pull in name and shit from MySQL until it's part of the mongo data
+						var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `user_id` = "+ticketData[0].UID;
+						mysqlConn.query(sql, function(err, userRow, fields) {
+							if(err) {
+								console.log(err);
+								return false;
+							}
+							if(userRow.constructor === Array && userRow.length > 0) {
+								res.send({ success: true, data: JSON.stringify(ticketData), user: JSON.stringify(userRow[0]), replies: JSON.stringify(replyData) });
+							}
+						});
+					} else {
+						res.send({ success: true, data: JSON.stringify(ticketData), user: {}, replies: JSON.stringify(replyData) });
 					}
-					if(userRow.constructor === Array && userRow.length > 0) {
-						res.send({ success: true, data: JSON.stringify(docs), user: JSON.stringify(userRow[0]) });
-						/*console.log("TICKET ISSUER USER DETAILS:");
-						console.log(user);*/
-						//return true;
-					}
-				});
-			} else {
-				res.send({ success: true, data: JSON.stringify(docs), user: {} });
-			}
+				}
+			});
 		}
-	})
+	});
 });
 
 // DELETE A TICKET
@@ -366,6 +368,69 @@ app.post('/support/ticket/delete', checkAuth, (req, res) => {
 			console.log('TICKET DELETE: '+caseNo);
 			res.status(200).send({ success: true });
 			return;
+		});
+	}
+});
+
+// REPLY TO A TICKET
+app.post('/support/ticket/reply', checkAuth, (req, res) => {
+	var token = req.headers['x-access-token'];
+	let caseNo = req.body.caseNo;
+	let message = req.body.message;
+
+	if(message.length <= 2) {
+
+	}
+	console.log('POST TICKET REPLY: '+caseNo);
+	if(typeof caseNo === 'string' && caseNo.length >=5) {
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			if (err) {res.status(401).send({ auth: false, message: 'Failed to authenticate token.' }); return}
+			
+			// Let's perform additional role check here; allow support, support managers and super admins to reply to a support ticket
+			var userRoles = tokenDecoded.roles;
+			if(userRoles.includes("super_admin") || userRoles.includes("support_super") || userRoles.includes("support")) {
+				ContactReply.create({caseNo: caseNo, senderName: "EV Support", UserId: 0, message: message}, (error, result) => {
+					if (!!error) {
+						console.log(error);
+						res.status(500).send({ success: false });
+					}
+					
+					else {res.status(200).send({ success: true }); return}
+				});
+			} else {
+				res.status(401).send({ success: false });
+				return
+			}
+		});
+	}
+});
+
+// UPDATE TICKET STATUS
+app.post('/support/ticket/update', checkAuth, (req, res) => {
+	var token = req.headers['x-access-token'];
+	let caseNo = req.body.caseNo;
+	let status = req.body.status;
+
+	if(status.length <= 2) {
+
+	}
+	console.log('POST TICKET UPDATE STATUS: '+caseNo);
+	if(typeof caseNo === 'string' && caseNo.length >=5) {
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			if (err) {res.status(401).send({ auth: false, message: 'Failed to authenticate token.' }); return}
+			
+			// Let's perform additional role check here; allow support, support managers and super admins to reply to a support ticket
+			var userRoles = tokenDecoded.roles;
+			if(userRoles.includes("super_admin") || userRoles.includes("support_super") || userRoles.includes("support")) {
+				const filter = { caseNo: caseNo };
+				const update = { Status: status };
+				ContactForm.findOneAndUpdate(filter, update, function(err, doc) {
+					if (err) return res.status(500).send({ success: false });
+					return res.status(200).send({ success: true });
+				});
+			} else {
+				return res.status(401).send({ success: false });
+			}
 		});
 	}
 });
