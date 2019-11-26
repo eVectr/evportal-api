@@ -1,13 +1,8 @@
 //const mongoose = require('mongoose').set('debug', true);
 const mongoose = require('mongoose');
 const express = require('express');
-//const nodemailer = require('nodemailer');
-const mysql = require('mysql');
 const socketIo = require("socket.io");
-//const fs = require('fs');
-
-// Load the project root .env config vars
-const dotenv = require('dotenv');
+const dotenv = require('dotenv'); // Load the project root .env config vars
 var jwt = require('jsonwebtoken');
 dotenv.config();
 
@@ -49,12 +44,8 @@ require('./db/evcontactform.js');
 require('./db/evcontactreply.js');
 
 // MySQL Conneciton
-var mysqlConn = mysql.createConnection({
-	host     : process.env.MYSQL_HOST,
-	database : process.env.MYSQL_DB,
-	user     : process.env.MYSQL_USER,
-	password : process.env.MYSQL_PASS,
-});
+var mysqlConn = require('./mysql.js');
+var User = require('./models/User.js'); // User MySQL Model Functions
 
 app.use((req, res, next) => {
 	res.setHeader('Access-Control-Allow-Origin', '*')
@@ -78,7 +69,6 @@ function checkAuth(req, res, next) {
 	//res.status(401).send({ auth: false, message: 'Invalid session' });
 	return false;
 }
-
 
 // LOGIN ROUTE
 app.post('/login', (req, res) => {
@@ -158,17 +148,11 @@ app.post('/auth/check', checkAuth, (req,res) => {
 
 // USERS - ALL USERS
 app.get('/getusers', checkAuth, (req, res) => {
-	console.log("GET REQUEST /getusers")
-	// MySQL User Select
-	var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users";
-	mysqlConn.query(sql, function(err, rows, fields) {
-		if(err) {
-			console.log(err);
-			res.send({ success: false });
-		}
-		if(rows.constructor === Array && rows.length > 0) {
+	console.log("GET REQUEST /getusers");
+	User.getAllUsers(function(err, users) {
+		if(users.constructor === Array && users.length > 0) {
 			//console.log(JSON.stringify(rows));
-			res.status(200).send({ success: true, data: JSON.stringify(rows) });
+			res.status(200).send({ success: true, data: JSON.stringify(users) });
 		} else {
 			console.log("getusers FAILED");
 			res.send({ success: false });
@@ -176,28 +160,19 @@ app.get('/getusers', checkAuth, (req, res) => {
 	});
 });
 
-
 // GET USERS BY ROLE
 app.get('/users/role', checkAuth, (req, res) => {
+	console.log("GET REQUEST /users/role");
 	if (req.query.name === "support_agent") {
-		var sql = "SELECT users.user_id,users.display_name,users.first_name,users.last_name FROM users WHERE user_id IN (SELECT user_roles.user_id FROM user_roles WHERE role_id=1)";
+		User.getUsersByRole(function(err, users) {
+			if(users.constructor === Array && users.length > 0) {
+				res.status(200).send({ success: true, data: JSON.stringify(users) });
+			} else {
+				console.log("getusers FAILED");
+				res.send({ success: false });
+			}
+		});
 	}
-	
-	mysqlConn.query(sql, function(err, rows, fields) {
-		if(err) {
-			console.log(err);
-			res.send({ error: "DB Query Failed" });
-			return false;
-		}
-		if(rows.constructor === Array && rows.length > 0) {
-			console.log(JSON.stringify(rows));
-			res.send({ success: true, data: JSON.stringify(rows) });
-		} else {
-			console.log("get users by role FAILED");
-			res.send({ success: false });
-		}
-	});
-	return;
 });
 
 // GET SINGLE USER
@@ -312,13 +287,14 @@ app.get('/support/tickets', checkAuth, (req, res) => {
 
 // GET SINGLE TICKET
 app.get('/support/ticket', checkAuth, (req, res) => {
+	console.log("GET REQUEST /support/ticket");
 	ContactForm.find({'caseNo':req.query.caseNo}, function (err, ticketData) {
 		if (err) {
 			console.log('error');
 			res.send(err);
 		} else {
 			// GET TICKET REPLIES
-			console.log(ticketData);
+			//console.log(ticketData);
 			ContactReply.find({'caseNo':req.query.caseNo}, function (err, replyData) {
 				if (err) {
 					console.log('error');
@@ -438,19 +414,11 @@ app.post('/support/ticket/update', checkAuth, (req, res) => {
 // GET SUPPORT AGENTS
 app.get('/getagents', checkAuth, (req, res) => {
 	console.log("GET REQUEST /getagents");
-	// MySQL User Select
-	var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE user_id IN ((SELECT user_id FROM user_roles WHERE role_id = 1));";
-	mysqlConn.query(sql, function(err, rows, fields) {
-		if(err) {
-			console.log(err);
-			res.send({ success: false });
-		}
-		if(rows.constructor === Array && rows.length > 0) {
-			//console.log(JSON.stringify(rows));
-			res.status(200).send({ success: true, data: JSON.stringify(rows) });
+	User.getSupportAgents(function(err, users) {
+		if(users.constructor === Array && users.length > 0) {
+			res.status(200).send({ success: true, data: JSON.stringify(users) });
 		} else {
-			console.log("getagents query with no results");
-			//res.status(200).send({ success: true, data: JSON.stringify({}) });
+			console.log("getusers FAILED");
 			res.send({ success: false });
 		}
 	});
