@@ -106,7 +106,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.disable('x-powered-by'); // Do not announce we are using express
 
 // MySQL Conneciton
-var mysqlConn = require('./mysqlConn.js'); // MySQL Connection Module
+//var mysqlConn = require('./mysqlConn.js'); // MySQL Connection Module
 var User = require('./models/User.js'); // MySQL User Model
 
 app.use((req, res, next) => {
@@ -243,24 +243,20 @@ app.get('/getuser', checkAuth, (req,res) => {
 		return false;
 	}
 	// MySQL User Select
-	var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `user_id` = "+req.query.id;
-	mysqlConn.query(sql, function(err, rows, fields) {
-		if(err) {
-			console.log(err);
+	User.getUserByID(req.query.id,function(error, userResult) {
+		if(error) {
+			console.log(error);
 			res.send({ success: false });
+			return;
 		}
-		if(rows.constructor === Array && rows.length > 0) {
-			var user_roles = {};
-			//console.log(JSON.stringify(rows));
-			var sql = "SELECT * FROM user_roles roles LEFT JOIN role_types types ON roles.role_id = types.id WHERE roles.user_id = "+req.query.id;
-			mysqlConn.query(sql, function(err, roles, fields) {
-				if(roles.constructor === Array && roles.length > 0) {
-					//console.log(JSON.stringify(roles));
-					var user_roles = roles;
+		var user_roles = {};
+		if(userResult.constructor === Array && userResult.length > 0) {
+			User.getUserRoles(req.query.id, function(error, rolesResult){
+				if(rolesResult.constructor === Array && rolesResult.length > 0) {
+					var user_roles = rolesResult;
 				}
-				res.send({ success: true, data: JSON.stringify(rows), roles: JSON.stringify(user_roles) });
+				res.send({ success: true, data: JSON.stringify(userResult), roles: JSON.stringify(user_roles) });
 			});
-			
 		} else {
 			console.log("getusers FAILED");
 			res.send({ success: false });
@@ -277,16 +273,15 @@ app.get('/getuserroles', checkAuth, (req, res) => {
 		return false;
 	}
 
-	var sql = "SELECT role_types.role_name FROM role_types INNER JOIN user_roles ON role_types.id = user_roles.role_id";
-	mysqlConn.query(sql, function(err, rows, fields) {
-		if(err) {
-			console.log(err);
+	User.getUserRoles(req.query.id, function(error, rolesResult){
+		if(error) {
+			console.log(error);
 			res.send({ error: "DB Query Failed" });
 			return false;
 		}
-		if(rows.constructor === Array && rows.length > 0) {
-			console.log(JSON.stringify(rows));
-			res.send({ success: true, data: JSON.stringify(rows) });
+		if(rolesResult.constructor === Array && rolesResult.length > 0) {
+			console.log(JSON.stringify(rolesResult));
+			res.send({ success: true, data: JSON.stringify(rolesResult) });
 		} else {
 			console.log("getuserroles FAILED");
 			res.send({ success: false });
@@ -300,15 +295,14 @@ app.post('/user/setrole', checkAuth, (req,res) => {
 	let user_id = req.body.user_id;
 	let role_name = req.body.role_name;
 	let enabled = req.body.enabled;
-	console.log(user_id+", "+role_name+", "+enabled);
+	//console.log(user_id+", "+role_name+", "+enabled);
 	
 	// If enabling, check role doesn't already exist
 	if(enabled===true) {
 		// Make Sure role_name is valid
-		var roleSQL = "INSERT INTO user_roles(user_id, role_id) VALUES ("+user_id+", (SELECT id FROM role_types WHERE role_name = '"+role_name+"'));";
-		mysqlConn.query(roleSQL, function(err, result, fields) {
-			if(err) {
-				console.log(err);
+		User.insertUserRole(req.body.user_id, req.body.role_name, function(error, result) {
+			if(error) {
+				console.log(error);
 				res.send({ success: false });
 				return false;
 			}
@@ -318,18 +312,16 @@ app.post('/user/setrole', checkAuth, (req,res) => {
 	}
 	// If disabling, check role exists to begin with
 	if(enabled===false) {
-		var roleSQL = "DELETE FROM user_roles WHERE user_id="+user_id+" AND role_id = (SELECT id FROM role_types WHERE role_name = '"+role_name+"');";
-		mysqlConn.query(roleSQL, function(err, result, fields) {
-			if(err) {
-				console.log(err);
+		User.deleteUserRole(req.body.user_id, req.body.role_name, function(error, result) {
+			if(error) {
+				console.log(error);
 				res.send({ success: false });
+				return false;
 			}
 			console.log("DELETED USER ROLE");
 			res.send({ success: true });
 		});
 	}
-
-	//res.send({ success: false });
 });
 
 // GET ALL TICKETS
@@ -363,14 +355,13 @@ app.get('/support/ticket', checkAuth, (req, res) => {
 					var user = {};
 					if(ticketData[0].Name === undefined && ticketData[0].UID !== undefined) {
 						// Lets pull in name and shit from MySQL until it's part of the mongo data
-						var sql = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `user_id` = "+ticketData[0].UID;
-						mysqlConn.query(sql, function(err, userRow, fields) {
+						User.getUserByID(ticketData[0].UID, function(error, userResult){
 							if(err) {
 								console.log(err);
 								return false;
 							}
-							if(userRow.constructor === Array && userRow.length > 0) {
-								res.send({ success: true, data: JSON.stringify(ticketData), user: JSON.stringify(userRow[0]), replies: JSON.stringify(replyData) });
+							if(userResult.constructor === Array && userResult.length > 0) {
+								res.send({ success: true, data: JSON.stringify(ticketData), user: JSON.stringify(userResult[0]), replies: JSON.stringify(replyData) });
 							}
 						});
 					} else {

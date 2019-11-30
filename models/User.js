@@ -18,6 +18,21 @@ User.authUser = function(email,password,result) {
 		}
 	});
 }
+
+User.getUserByID = function(user_id,result) {
+	var query = "SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users  WHERE `user_id` = ?";
+	sql.query(query, [ user_id ], function(err, rows, fields) {
+		if(err) {
+			console.log("error: ", err);
+			result(err, null);
+			return;
+		}
+		else {
+			result(null, rows);
+		}
+	});
+}
+
 User.getAllUsers = function (result) {
 	sql.query("SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM `users`", function (err, res) {
 		if(err) {
@@ -59,8 +74,8 @@ User.getUserRoles = function (user_id,result) {
 	sql.query(roleSQL, [ user_id ], function(err, rolesResult, fields) {
 		if(err) {
 			console.log(err);
-			res.send({ check: false, data: {} });
-			return;
+			//res.send({ check: false, data: {} });
+			return err;
 		} else {
 			result(null, rolesResult);
 		}
@@ -68,4 +83,27 @@ User.getUserRoles = function (user_id,result) {
 	});
 };
 
+User.insertUserRole = function(user_id, role_name, result) {
+	var roleSQL = "INSERT INTO user_roles(user_id, role_id) VALUES (?, (SELECT id FROM role_types WHERE role_name = ?));";
+	sql.query(roleSQL, [ user_id, role_name ], function(err, rolesResult, fields) {
+		if(err) {
+			console.log(err);
+			return err;
+		} else {
+			result(null, rolesResult);
+		}
+	});
+}
+
+User.deleteUserRole = function(user_id, role_name, result) {
+	var roleSQL = "DELETE FROM user_roles WHERE user_id=? AND role_id = (SELECT id FROM role_types WHERE role_name = ?);";
+	sql.query(roleSQL, [ user_id, role_name ], function(err, rolesResult, fields) {
+		if(err) {
+			console.log(err);
+			return err;
+		} else {
+			result(null, rolesResult);
+		}
+	});
+}
 module.exports = User;
