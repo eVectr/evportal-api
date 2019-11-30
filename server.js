@@ -23,148 +23,82 @@ require('./db/evcontactform.js');
 require('./db/evcontactreply.js');
 require('./db/evconnecteduser.js');
 
-// Flush the connected users mongo data
-ConnectedUser.remove({},(error, result)=>{
-	if(!error) {
-		console.log("Flushed connected users from evconnectedusers collection");
-	}
-});
-
-// Socket IO
-const io = socketIo(server);
-
-const postAuthenticate = client => {
-	client.on("connectedUsers", () => {
-		ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-			if(!error) {
-				client.emit('connectedUsers', docs);
-			}
-		});
-	});
-	client.on("tickle", () => client.emit("tickled"));
-};
-/*
-Object.defineProperty(connectedClients, "item", {
-	value: function(index, value) {
-		var key = Object.keys(this).sort(orderingFunction)[index];
-		if (arguments.length < 2) {
-			// Getter
-			return this[key];
+// Socket Server
+if(process.env.SOCKET_ENABLED==="true") {
+	// Flush the connected users mongo data
+	ConnectedUser.remove({},(error, result)=>{
+		if(!error) {
+			console.log("Flushed connected users from evconnectedusers collection");
 		}
-			// Setter
-			this[key] = value;
-			return this;
-	}
-});*/
-let connectedClientsMap = new Map();
-
-let connectedClients = [];
-
-require('socketio-auth')(io, {
-	authenticate: function (socket, data, callback) {
-		//get credentials sent by the client
-		var token = data.token;
-		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
-			if (err) {
-				console.log("(SOCKET) A token has failed authentication for the request.");
-				return callback(err);
-			}
-			ConnectedUser.create({
-				displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
-				UserId:tokenDecoded.id,
-				status: "Online",
-				socketID: socket.id,
-				lastUpdateDate: Date()
-			}, (error, result) => {
-				console.log("Added user to evconnectedusers collection. Result:");
-				console.log(result);
-				ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-					if(!error) {
-						socket.emit('connectedUsers', docs);
-					}
-				});
-			});
-			console.log(`(SOCKET) UID ${tokenDecoded.id} Authenticated`);
-			connectedClientsMap.set(socket);
-			return callback(null, true);
-		});
-	},
-	postAuthenticate,
-	disconnect: function (socket, data, callback) {
-		//console.log(connectedClients.get(socket['userid']));
-		var socketID = socket.id;
-		connectedClientsMap.delete(socket);
-		
-		
-		ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
-			if(!error) {
-				console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
-				console.log(result);
-				ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-					if(!error) {
-						socket.emit('connectedUsers', docs);
-					}
-				});
-			}
-		});
-
-
-        //console.info(`Socket client disconnected [id=${id}]`);
-	}
-});
-//const socketioAuth = require("socketio-auth");
-
-/*io.on('connection', function (socket) {
-	socket.on( 'new_notification', function( data ) {
-		console.log(data.title,data.message);
-		io.sockets.emit( 'show_notification', {
-			title: data.title,
-			message: data.message,
-			icon: data.icon,
-		});
 	});
-});*/
-/*
-let sequenceNumberByClient = new Map();
-let connectedClients = [];
 
-io.on("connection", socket => {
-	//console.log("New client connected");
-	console.info(`Socket client connected [id=${socket.id}]`);
+	// Socket IO
+	const io = socketIo(server);
 
-	sequenceNumberByClient.set(socket, 1);
-
-	socket.on("disconnect", () => {
-        sequenceNumberByClient.delete(socket);
-        console.info(`Socket client disconnected [id=${socket.id}]`);
-	});
-	
-	socket.on("auth", (data) => {
-		console.log("Socket Auth Request");
-		//console.log(data);
-		if(data.token.length) {
-			jwt.verify(data.token, process.env.JWT_SECRET, function(err, tokenDecoded) {
-				if (err) {
-					console.log("A token has failed authentication for the request.");
-					return false;
+	const postAuthenticate = client => {
+		client.on("connectedUsers", () => {
+			ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+				if(!error) {
+					client.emit('connectedUsers', docs);
 				}
-				console.log("Socket Authenticated");
+			});
+		});
+		client.on("tickle", () => client.emit("tickled"));
+	};
+	
+	let connectedClientsMap = new Map();
+	let connectedClients = [];
+	
+	require('socketio-auth')(io, {
+		authenticate: function (socket, data, callback) {
+			//get credentials sent by the client
+			var token = data.token;
+			jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+				if (err) {
+					console.log("(SOCKET) A token has failed authentication for the request.");
+					return callback(err);
+				}
+				ConnectedUser.create({
+					displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
+					UserId:tokenDecoded.id,
+					status: "Online",
+					socketID: socket.id,
+					lastUpdateDate: Date()
+				}, (error, result) => {
+					console.log("Added user to evconnectedusers collection. Result:");
+					console.log(result);
+					ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+						if(!error) {
+							socket.emit('connectedUsers', docs);
+						}
+					});
+				});
+				console.log(`(SOCKET) UID ${tokenDecoded.id} Authenticated`);
+				connectedClientsMap.set(socket);
+				return callback(null, true);
+			});
+		},
+		postAuthenticate,
+		disconnect: function (socket, data, callback) {
+			//console.log(connectedClients.get(socket['userid']));
+			var socketID = socket.id;
+			connectedClientsMap.delete(socket);
+			
+			
+			ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
+				if(!error) {
+					console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
+					console.log(result);
+					ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+						if(!error) {
+							socket.emit('connectedUsers', docs);
+						}
+					});
+				}
 			});
 		}
 	});
-});
-
-// sends each client its current sequence number
-setInterval(() => {
-	for (const [client, sequenceNumber] of sequenceNumberByClient.entries()) {
-		client.emit("seq-num", sequenceNumber);
-		sequenceNumberByClient.set(client, sequenceNumber + 1);
-	}
-}, 10000);
-*/
-
-
-
+}
 
 app.use(express.static('uploads'));
 app.use(bodyParser.json());
@@ -205,52 +139,48 @@ app.post('/login', (req, res) => {
 	let password = req.body.password;
 	let hasRole = false;
 
+	
 	var sql = "SELECT `user_id`,`display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `email_address` = ? AND `user_pass` = md5(?)";
-	mysqlConn.query(sql, [ email, password ], function(err, rows, fields) {
-		if(err) {
-			console.log(err);
+	User.authUser(req.body.email,req.body.password,function(error, userResult) {
+		if(error) {
+			console.log(error);
 			res.send({ check: false, data: {} });
+			return;
 		}
-		
-		if(rows.constructor === Array && rows.length > 0) {
-			if(rows[0].email_address.length > 3) {
+		if(userResult.constructor === Array && userResult.length > 0) {
+			if(userResult[0].email_address.length > 3) {
 				// Check to make sure user has the required roles
-				//var roleSQL = "SELECT `role_id` FROM `user_roles` WHERE `user_id` = ?";
-				var roleSQL = "SELECT types.role_name FROM user_roles roles LEFT JOIN role_types types ON roles.role_id = types.id WHERE `user_id` = ?";
-				mysqlConn.query(roleSQL, [ rows[0].user_id ], function(err, roleRows, fields) {
-					if(err) {
-						console.log(err);
+				User.getUserRoles(userResult[0].user_id,function(error,rolesResult) {
+					if(error) {
+						console.log(error);
 						res.send({ check: false, data: {} });
+						return;
 					}
-					if(roleRows.constructor === Array && roleRows.length > 0) {
-						for (var i = 0; i < roleRows.length; i++) {
-							if(roleRows[i].role_name === "super_admin" || roleRows[i].role_name === "support_agent" || roleRows[i].role_name === "support_super") {
+					if(rolesResult.constructor === Array && rolesResult.length > 0) {
+						for (var i = 0; i < rolesResult.length; i++) {
+							if(rolesResult[i].role_name === "super_admin" || rolesResult[i].role_name === "support_agent" || rolesResult[i].role_name === "support_super") {
 								hasRole = true;
 							}
 						}
-
-						let roleList = roleRows.map(({ role_name }) => role_name);
-						//console.log(roleList);
-
+						let roleList = rolesResult.map(({ role_name }) => role_name);
 						if(hasRole === true) {
 							console.log("User Successfully Authenticated");
 							// CREATE SESSION TOKEN
 							var token = jwt.sign({
-								id: rows[0].user_id,
-								first_name: rows[0].first_name,
-								last_name: rows[0].last_name,
+								id: userResult[0].user_id,
+								first_name: userResult[0].first_name,
+								last_name: userResult[0].last_name,
 								roles: JSON.stringify(roleList)
 							}, process.env.JWT_SECRET, {
 								expiresIn: 86400 // expires in 24 hours
 							});
 							console.log("TOKEN CREATED: "+token);
-							res.send({ check: true, token: token, roles: JSON.stringify(roleRows) });
+							res.send({ check: true, token: token, roles: JSON.stringify(rolesResult) });
 						} else {
 							res.send({ check: false, data: {} });
 						}
 					} else {
 						console.log("User FAILED authentication (No roles found for user)");
-						//console.log(roleRows);
 						res.send({ check: false, data: {} });
 					}
 				});

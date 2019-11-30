@@ -6,6 +6,18 @@ var User = function(user){
     this.created_at = new Date();
 };
 
+User.authUser = function(email,password,result) {
+	var query = "SELECT `user_id`,`display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM users WHERE `email_address` = ? AND `user_pass` = md5(?)";
+	sql.query(query, [ email, password ], function(err, rows, fields) {
+		if(err) {
+			console.log("error: ", err);
+			result(err, null);
+		}
+		else {
+			result(null, rows);
+		}
+	});
+}
 User.getAllUsers = function (result) {
 	sql.query("SELECT `user_id`, `display_name`,`first_name`,`last_name`,`birth_date`,`email_address` FROM `users`", function (err, res) {
 		if(err) {
@@ -39,6 +51,20 @@ User.getSupportAgents = function (result) {
 		else {
 			result(null, res);
 		}
+	});
+};
+
+User.getUserRoles = function (user_id,result) {
+	var roleSQL = "SELECT types.role_name FROM user_roles roles LEFT JOIN role_types types ON roles.role_id = types.id WHERE `user_id` = ?";
+	sql.query(roleSQL, [ user_id ], function(err, rolesResult, fields) {
+		if(err) {
+			console.log(err);
+			res.send({ check: false, data: {} });
+			return;
+		} else {
+			result(null, rolesResult);
+		}
+		
 	});
 };
 
