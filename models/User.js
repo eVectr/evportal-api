@@ -1,5 +1,5 @@
 'user strict';
-var sql = require('../mysql.js');
+var sql = require('../mysqlConn.js');
 var User = function(user){
     this.user = user.user;
     this.status = user.status;

@@ -9,7 +9,8 @@
 		"jsonwebtoken": "^8.5.1",
 		"mongoose": "^5.5.15",
 		"mysql": "^2.17.1",
-		"socket.io": "^2.3.0"
+		"socket.io": "^2.3.0",
+		"socketio-auth": "^0.1.1"
 	},
 	"scripts": {
 		"start-server": "nodemon server.js",

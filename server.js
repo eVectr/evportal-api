@@ -12,40 +12,168 @@ var app = express();
 var bodyParser = require('body-parser');
 const server = require('http').createServer(app);
 
+// Mongo Connection
+mongoose.connect(process.env.MONGO_CONN_STR, (err) => {
+	if (err) throw err;
+	console.log('Mongoose connected');
+});
+
+// Mongo Schemas
+require('./db/evcontactform.js');
+require('./db/evcontactreply.js');
+require('./db/evconnecteduser.js');
+
+// Flush the connected users mongo data
+ConnectedUser.remove({},(error, result)=>{
+	if(!error) {
+		console.log("Flushed connected users from evconnectedusers collection");
+	}
+});
+
 // Socket IO
 const io = socketIo(server);
-io.on("connection", socket => {
-    console.log("New client connected");
 
-    //Here we listen on a new namespace called "incoming data"
-    socket.on("incoming data", (data)=>{
-        //Here we broadcast it out to all other sockets EXCLUDING the socket which sent us the data
-       socket.broadcast.emit("outgoing data", {num: data});
-    });
+const postAuthenticate = client => {
+	client.on("connectedUsers", () => {
+		ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+			if(!error) {
+				client.emit('connectedUsers', docs);
+			}
+		});
+	});
+	client.on("tickle", () => client.emit("tickled"));
+};
+/*
+Object.defineProperty(connectedClients, "item", {
+	value: function(index, value) {
+		var key = Object.keys(this).sort(orderingFunction)[index];
+		if (arguments.length < 2) {
+			// Getter
+			return this[key];
+		}
+			// Setter
+			this[key] = value;
+			return this;
+	}
+});*/
+let connectedClientsMap = new Map();
 
-    //A special namespace "disconnect" for when a client disconnects
-    socket.on("disconnect", () => console.log("Client disconnected"));
+let connectedClients = [];
+
+require('socketio-auth')(io, {
+	authenticate: function (socket, data, callback) {
+		//get credentials sent by the client
+		var token = data.token;
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			if (err) {
+				console.log("(SOCKET) A token has failed authentication for the request.");
+				return callback(err);
+			}
+			ConnectedUser.create({
+				displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
+				UserId:tokenDecoded.id,
+				status: "Online",
+				socketID: socket.id,
+				lastUpdateDate: Date()
+			}, (error, result) => {
+				console.log("Added user to evconnectedusers collection. Result:");
+				console.log(result);
+				ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+					if(!error) {
+						socket.emit('connectedUsers', docs);
+					}
+				});
+			});
+			console.log(`(SOCKET) UID ${tokenDecoded.id} Authenticated`);
+			connectedClientsMap.set(socket);
+			return callback(null, true);
+		});
+	},
+	postAuthenticate,
+	disconnect: function (socket, data, callback) {
+		//console.log(connectedClients.get(socket['userid']));
+		var socketID = socket.id;
+		connectedClientsMap.delete(socket);
+		
+		
+		ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
+			if(!error) {
+				console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
+				console.log(result);
+				ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
+					if(!error) {
+						socket.emit('connectedUsers', docs);
+					}
+				});
+			}
+		});
+
+
+        //console.info(`Socket client disconnected [id=${id}]`);
+	}
 });
+//const socketioAuth = require("socketio-auth");
+
+/*io.on('connection', function (socket) {
+	socket.on( 'new_notification', function( data ) {
+		console.log(data.title,data.message);
+		io.sockets.emit( 'show_notification', {
+			title: data.title,
+			message: data.message,
+			icon: data.icon,
+		});
+	});
+});*/
+/*
+let sequenceNumberByClient = new Map();
+let connectedClients = [];
+
+io.on("connection", socket => {
+	//console.log("New client connected");
+	console.info(`Socket client connected [id=${socket.id}]`);
+
+	sequenceNumberByClient.set(socket, 1);
+
+	socket.on("disconnect", () => {
+        sequenceNumberByClient.delete(socket);
+        console.info(`Socket client disconnected [id=${socket.id}]`);
+	});
+	
+	socket.on("auth", (data) => {
+		console.log("Socket Auth Request");
+		//console.log(data);
+		if(data.token.length) {
+			jwt.verify(data.token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+				if (err) {
+					console.log("A token has failed authentication for the request.");
+					return false;
+				}
+				console.log("Socket Authenticated");
+			});
+		}
+	});
+});
+
+// sends each client its current sequence number
+setInterval(() => {
+	for (const [client, sequenceNumber] of sequenceNumberByClient.entries()) {
+		client.emit("seq-num", sequenceNumber);
+		sequenceNumberByClient.set(client, sequenceNumber + 1);
+	}
+}, 10000);
+*/
+
+
+
 
 app.use(express.static('uploads'));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.disable('x-powered-by'); // Do not announce we are using express
 
-// Mongo Connection
-mongoose.connect(process.env.MONGO_CONN_STR, (err) => {
-	if (err) throw err
-	console.log('Mongoose connected')
-});
-
-
-// Mongo Schemas
-require('./db/evcontactform.js');
-require('./db/evcontactreply.js');
-
 // MySQL Conneciton
-var mysqlConn = require('./mysql.js');
-var User = require('./models/User.js'); // User MySQL Model Functions
+var mysqlConn = require('./mysqlConn.js'); // MySQL Connection Module
+var User = require('./models/User.js'); // MySQL User Model
 
 app.use((req, res, next) => {
 	res.setHeader('Access-Control-Allow-Origin', '*')
@@ -108,7 +236,9 @@ app.post('/login', (req, res) => {
 							console.log("User Successfully Authenticated");
 							// CREATE SESSION TOKEN
 							var token = jwt.sign({
-								id: rows[0].id,
+								id: rows[0].user_id,
+								first_name: rows[0].first_name,
+								last_name: rows[0].last_name,
 								roles: JSON.stringify(roleList)
 							}, process.env.JWT_SECRET, {
 								expiresIn: 86400 // expires in 24 hours
@@ -410,6 +540,8 @@ app.post('/support/ticket/update', checkAuth, (req, res) => {
 		});
 	}
 });
+
+// ESCALATE TICKET
 
 // GET SUPPORT AGENTS
 app.get('/getagents', checkAuth, (req, res) => {
