@@ -24,8 +24,6 @@ const server = require('https').createServer({
 // HTTP
 //const server = require('http').createServer(app);
 
-
-
 // Mongo Connection
 mongoose.connect(process.env.MONGO_CONN_STR, (err) => {
 	if (err) throw err;
@@ -48,13 +46,66 @@ if(process.env.SOCKET_ENABLED==="true") {
 
 	// Socket IO
 	const io = socketIo(server);
-	io.on('connection', socket => {
-		console.log("(SOCKET) Client Connected", socket.id);
-		io.emit("device connected", [{ UserId: socket.id, SocketID: socket.id, displayName: 'Test Icles' }]);
-		socket.on('disconnect', function () {
-			console.log("(SOCKET) Client Disconnected", socket.id);
-			io.emit("device disconnected", []);
+	function postAuthenticate(socket, data) {
+		var token = data.token;
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			
+			// JWT Error
+			if (err) {
+				console.log("(SOCKET) A token has failed authentication for postAuthenticate");
+				return;
+			}
+			// Mongo Insert
+			ConnectedUser.create({
+				displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
+				UserId:tokenDecoded.id,
+				status: "Online",
+				socketID: socket.id,
+				lastUpdateDate: Date()
+			}, (error, result) => {
+				if(error) {
+					return false;
+				}
+				console.log("Added user to evconnectedusers collection. SocketID: ", socket.id);
+				// Mongo Find
+				ConnectedUser.find({},{ socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
+					if(!error) {
+						io.emit("device connected", docs);
+					}
+				});
+			});
 		});
+	}
+	require('socketio-auth') (io, {
+		authenticate: function (socket, data, callback) {
+			//get credentials sent by the client
+			var token = data.token;
+			jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+				// JWT Error
+				if (err) {
+					console.log("(SOCKET) A token has failed authentication for the request.");
+					return callback(err);
+				}
+				// Authenticated
+				console.log("(SOCKET) Client Connected", socket.id);
+				return callback(null, true);
+			});
+		},
+		postAuthenticate,
+		disconnect: function (socket, data, callback) {
+			var socketID = socket.id;
+			ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
+				if(!error) {
+					console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
+					console.log(result);
+					ConnectedUser.find({},{ socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
+						if(!error) {
+							io.emit("device disconnected", docs);
+						}
+					});
+				}
+			});
+		}
 	});
 }
 
@@ -83,9 +134,6 @@ function checkAuth(req, res, next) {
 		}
 		return next();
 	});
-	
-	// IF A USER ISN'T LOGGED IN return 401 status code
-	//res.status(401).send({ auth: false, message: 'Invalid session' });
 	return false;
 }
 
