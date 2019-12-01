@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const express = require('express');
 const socketIo = require("socket.io");
 const dotenv = require('dotenv'); // Load the project root .env config vars
+const fs = require('fs');
 var jwt = require('jsonwebtoken');
 dotenv.config();
 
@@ -10,7 +11,20 @@ console.log(`Starting EV-Portal on Port ${process.env.PORT}`);
 
 var app = express();
 var bodyParser = require('body-parser');
-const server = require('http').createServer(app);
+
+var useSSL = false;
+// HTTPS
+const server = require('https').createServer({
+	/* Let's Encrypt Certs */
+	key: fs.readFileSync('privkey.pem'),
+	cert: fs.readFileSync('cert.pem'),
+	ca: fs.readFileSync('chain.pem'),
+}, app);
+
+// HTTP
+//const server = require('http').createServer(app);
+
+
 
 // Mongo Connection
 mongoose.connect(process.env.MONGO_CONN_STR, (err) => {
@@ -26,7 +40,7 @@ require('./db/evconnecteduser.js');
 // Socket Server
 if(process.env.SOCKET_ENABLED==="true") {
 	// Flush the connected users mongo data
-	ConnectedUser.remove({},(error, result)=>{
+	ConnectedUser.remove({},(error, result) => {
 		if(!error) {
 			console.log("Flushed connected users from evconnectedusers collection");
 		}
@@ -34,69 +48,13 @@ if(process.env.SOCKET_ENABLED==="true") {
 
 	// Socket IO
 	const io = socketIo(server);
-
-	const postAuthenticate = client => {
-		client.on("connectedUsers", () => {
-			ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-				if(!error) {
-					client.emit('connectedUsers', docs);
-				}
-			});
+	io.on('connection', socket => {
+		console.log("(SOCKET) Client Connected", socket.id);
+		io.emit("device connected", [{ UserId: socket.id, SocketID: socket.id, displayName: 'Test Icles' }]);
+		socket.on('disconnect', function () {
+			console.log("(SOCKET) Client Disconnected", socket.id);
+			io.emit("device disconnected", []);
 		});
-		client.on("tickle", () => client.emit("tickled"));
-	};
-	
-	let connectedClientsMap = new Map();
-	let connectedClients = [];
-	
-	require('socketio-auth')(io, {
-		authenticate: function (socket, data, callback) {
-			//get credentials sent by the client
-			var token = data.token;
-			jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
-				if (err) {
-					console.log("(SOCKET) A token has failed authentication for the request.");
-					return callback(err);
-				}
-				ConnectedUser.create({
-					displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
-					UserId:tokenDecoded.id,
-					status: "Online",
-					socketID: socket.id,
-					lastUpdateDate: Date()
-				}, (error, result) => {
-					console.log("Added user to evconnectedusers collection. Result:");
-					console.log(result);
-					ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-						if(!error) {
-							socket.emit('connectedUsers', docs);
-						}
-					});
-				});
-				console.log(`(SOCKET) UID ${tokenDecoded.id} Authenticated`);
-				connectedClientsMap.set(socket);
-				return callback(null, true);
-			});
-		},
-		postAuthenticate,
-		disconnect: function (socket, data, callback) {
-			//console.log(connectedClients.get(socket['userid']));
-			var socketID = socket.id;
-			connectedClientsMap.delete(socket);
-			
-			
-			ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
-				if(!error) {
-					console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
-					console.log(result);
-					ConnectedUser.find({},{ UserId: 1, displayName: 1},(error, docs) => {
-						if(!error) {
-							socket.emit('connectedUsers', docs);
-						}
-					});
-				}
-			});
-		}
 	});
 }
 
@@ -106,7 +64,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.disable('x-powered-by'); // Do not announce we are using express
 
 // MySQL Conneciton
-//var mysqlConn = require('./mysqlConn.js'); // MySQL Connection Module
 var User = require('./models/User.js'); // MySQL User Model
 
 app.use((req, res, next) => {
@@ -289,13 +246,12 @@ app.get('/getuserroles', checkAuth, (req, res) => {
 	});
 });
 
-// SET ROLE
+// SET USER ROLE
 app.post('/user/setrole', checkAuth, (req,res) => {
 	console.log("RECEIVED SET ROLE POST");
 	let user_id = req.body.user_id;
 	let role_name = req.body.role_name;
 	let enabled = req.body.enabled;
-	//console.log(user_id+", "+role_name+", "+enabled);
 	
 	// If enabling, check role doesn't already exist
 	if(enabled===true) {
