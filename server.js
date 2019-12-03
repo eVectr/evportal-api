@@ -59,7 +59,7 @@ if(process.env.SOCKET_ENABLED==="true") {
 			if(!connectedClientsMap.has(tokenDecoded.id)) {
 				connectedClientsMap.set(
 					tokenDecoded.id,
-					{ socketID: socket.id, UserId: tokenDecoded.id, displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name }
+					{ socketID: socket.id, UserId: tokenDecoded.id, status: "Online", displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name }
 				);
 				//let response = Object.keys(connectedClientsMap)
 				console.info("(SOCKET) Updated connectedClientsMap",socket.id);
@@ -84,6 +84,10 @@ if(process.env.SOCKET_ENABLED==="true") {
 				io.emit("device connected", responseObj);
 			});
 		});
+		socket.on("update status", function(data) {
+			
+			console.info("(SOCKET) TEST", data);
+		});
 	}
 	require('socketio-auth') (io, {
 		authenticate: function (socket, data, callback) {
@@ -103,35 +107,35 @@ if(process.env.SOCKET_ENABLED==="true") {
 		postAuthenticate,
 		disconnect: function (socket, data, callback) {
 			var socketID = socket.id;
-			
 			// First get the user's ID from the session data
 			ConnectedUser.find({socketID: socketID}, { socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
 				if(!error) {
-					var UserId = docs[0].UserId;
-					
-					// Then delete the session from evconnectedusers
-					ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
-						if(!error) {
-							console.info("(SOCKET) Removed socket session from evconnectedusers collection", socketID);
-							
-							// Then check if any other sessions exist for the owner of this session
-							ConnectedUser.find({UserId: UserId}, (error, docs) => {
+					if(Array.isArray(docs)) {
+						var UserId = docs[0].UserId;
+						// Then delete the session from evconnectedusers
+						ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
+							if(!error) {
+								console.info("(SOCKET) Removed socket session from evconnectedusers collection", socketID);
 								
-								// If no existing sessions we can remove the user from the connectedClientsMap and broadcast the new object
-								if(!error && !docs.length) {
-									connectedClientsMap.delete(UserId);
-									console.info("(SOCKET) Removed user from connectedClientsMap", UserId);
-									const responseObj = {};
-									for (let [key, value] of connectedClientsMap) {
-										responseObj[key] = value;
+								// Then check if any other sessions exist for the owner of this session
+								ConnectedUser.find({UserId: UserId}, (error, docs) => {
+									
+									// If no existing sessions we can remove the user from the connectedClientsMap and broadcast the new object
+									if(!error && !docs.length) {
+										connectedClientsMap.delete(UserId);
+										console.info("(SOCKET) Removed user from connectedClientsMap", UserId);
+										const responseObj = {};
+										for (let [key, value] of connectedClientsMap) {
+											responseObj[key] = value;
+										}
+										console.info("(SOCKET) Broadcast (emit) new connectedClientsMap");
+										io.emit("device disconnected", responseObj);
+										//io.emit("device disconnected", connectedClientsMap);
 									}
-									console.info("(SOCKET) Broadcast (emit) new connectedClientsMap");
-									io.emit("device disconnected", responseObj);
-									//io.emit("device disconnected", connectedClientsMap);
-								}
-							});
-						}
-					});
+								});
+							}
+						});
+					}
 				}
 			});
 		}
