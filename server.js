@@ -37,7 +37,7 @@ require('./db/evconnecteduser.js');
 
 // Socket Server
 if(process.env.SOCKET_ENABLED==="true") {
-	// Flush the connected users mongo data
+	// Flush the connected users mongo data on startup
 	ConnectedUser.remove({},(error, result) => {
 		if(!error) {
 			console.log("Flushed connected users from evconnectedusers collection");
@@ -46,19 +46,28 @@ if(process.env.SOCKET_ENABLED==="true") {
 
 	// Socket IO
 	const io = socketIo(server);
+	let connectedClientsMap = new Map();
 	function postAuthenticate(socket, data) {
 		var token = data.token;
 		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
-			
 			// JWT Error
 			if (err) {
-				console.log("(SOCKET) A token has failed authentication for postAuthenticate");
+				console.info("(SOCKET) A token has failed authentication for postAuthenticate");
 				return;
+			}
+			// Check if user is part of the usersMap, if not insert it
+			if(!connectedClientsMap.has(tokenDecoded.id)) {
+				connectedClientsMap.set(
+					tokenDecoded.id,
+					{ socketID: socket.id, UserId: tokenDecoded.id, displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name }
+				);
+				//let response = Object.keys(connectedClientsMap)
+				console.info("(SOCKET) Updated connectedClientsMap",socket.id);
 			}
 			// Mongo Insert
 			ConnectedUser.create({
 				displayName: tokenDecoded.first_name+' '+tokenDecoded.last_name,
-				UserId:tokenDecoded.id,
+				UserId: tokenDecoded.id,
 				status: "Online",
 				socketID: socket.id,
 				lastUpdateDate: Date()
@@ -66,13 +75,13 @@ if(process.env.SOCKET_ENABLED==="true") {
 				if(error) {
 					return false;
 				}
-				console.log("Added user to evconnectedusers collection. SocketID: ", socket.id);
-				// Mongo Find
-				ConnectedUser.find({},{ socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
-					if(!error) {
-						io.emit("device connected", docs);
-					}
-				});
+				console.info("(SOCKET) Inserted session in evconnectedusers collection", socket.id);
+				// Convert map to {userId{userObject}}
+				const responseObj = {};
+				for (let [key, value] of connectedClientsMap) {
+					responseObj[key] = value;
+				}
+				io.emit("device connected", responseObj);
 			});
 		});
 	}
@@ -94,13 +103,33 @@ if(process.env.SOCKET_ENABLED==="true") {
 		postAuthenticate,
 		disconnect: function (socket, data, callback) {
 			var socketID = socket.id;
-			ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
+			
+			// First get the user's ID from the session data
+			ConnectedUser.find({socketID: socketID}, { socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
 				if(!error) {
-					console.log("Removed user from evconnectedusers collection, socket ID "+socketID+". Result:");
-					console.log(result);
-					ConnectedUser.find({},{ socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
+					var UserId = docs[0].UserId;
+					
+					// Then delete the session from evconnectedusers
+					ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
 						if(!error) {
-							io.emit("device disconnected", docs);
+							console.info("(SOCKET) Removed socket session from evconnectedusers collection", socketID);
+							
+							// Then check if any other sessions exist for the owner of this session
+							ConnectedUser.find({UserId: UserId}, (error, docs) => {
+								
+								// If no existing sessions we can remove the user from the connectedClientsMap and broadcast the new object
+								if(!error && !docs.length) {
+									connectedClientsMap.delete(UserId);
+									console.info("(SOCKET) Removed user from connectedClientsMap", UserId);
+									const responseObj = {};
+									for (let [key, value] of connectedClientsMap) {
+										responseObj[key] = value;
+									}
+									console.info("(SOCKET) Broadcast (emit) new connectedClientsMap");
+									io.emit("device disconnected", responseObj);
+									//io.emit("device disconnected", connectedClientsMap);
+								}
+							});
 						}
 					});
 				}
