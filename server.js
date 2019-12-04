@@ -85,8 +85,46 @@ if(process.env.SOCKET_ENABLED==="true") {
 			});
 		});
 		socket.on("update status", function(data) {
-			
-			console.info("(SOCKET) TEST", data);
+			console.info("(SOCKET) Received update status", socket.id);
+			// Lets check that the status sent by client is valid first
+			if(!data.status.length) {
+				console.warn("(SOCKET) Status change sent but had no value");
+				return;
+			}
+			if(["Online","Away","Busy"].indexOf(data.status) < 0) {
+				console.warn("(SOCKET) Status change sent but was not a valid value");
+				return;
+			}
+			// Get the user's details from mongo by socket.id
+			ConnectedUser.find({socketID: socket.id}, { socketID: 1, UserId: 1, displayName: 1, status: 1 }, (error, docs) => {
+				if(!error) {
+					if(Array.isArray(docs)) {
+						var UserId = docs[0].UserId;
+						var status = docs[0].status;
+						var displayName = docs[0].displayName;
+						// Only update status if not the same
+						if(data.status !== status) {
+							connectedClientsMap.set(
+								UserId,
+								{ socketID: socket.id, UserId: UserId, status: data.status, displayName: displayName }
+							);
+						}
+						// Update the status for all sessions by UserID (Mongo)
+						ConnectedUser.updateMany({UserId: UserId}, { $set: { status: data.status } }, (error, res) => {
+							console.info("(SOCKET) Updated status for UserId", UserId);
+							const responseObj = {};
+							for (let [key, value] of connectedClientsMap) {
+								responseObj[key] = value;
+							}
+							io.emit("device status changed", responseObj);
+						});
+					} else {
+						console.info("(SOCKET) Unable to locate user in database by socketID", socket.id);
+					}
+				} else {
+					console.warn(error);
+				}
+			});
 		});
 	}
 	require('socketio-auth') (io, {
