@@ -148,7 +148,7 @@ if(process.env.SOCKET_ENABLED==="true") {
 			// First get the user's ID from the session data
 			ConnectedUser.find({socketID: socketID}, { socketID: 1, UserId: 1, displayName: 1 },(error, docs) => {
 				if(!error) {
-					if(Array.isArray(docs)) {
+					if(Array.isArray(docs) && docs.length >= 1) {
 						var UserId = docs[0].UserId;
 						// Then delete the session from evconnectedusers
 						ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
@@ -436,7 +436,19 @@ app.get('/support/ticket', checkAuth, (req, res) => {
 								return false;
 							}
 							if(userResult.constructor === Array && userResult.length > 0) {
-								res.send({ success: true, data: JSON.stringify(ticketData), user: JSON.stringify(userResult[0]), replies: JSON.stringify(replyData) });
+								// Let's send the support agents for now until we have async capable selects  
+								User.getSupportAgents(function(error, agents) {
+									var availableAgents = [];
+									if(!error) {
+										for (var i in agents) {
+											availableAgents.push({value: agents[i].user_id, label: agents[i].first_name+' '+agents[i].last_name});
+											//console.log('Agent ', agents[i].user_id+' '+agents[i].first_name+' '+' '+agents[i].last_name);
+										}
+									}
+									
+									res.send({ success: true, data: JSON.stringify(ticketData), user: JSON.stringify(userResult[0]), replies: JSON.stringify(replyData), availableAgents: JSON.stringify(availableAgents) });
+								});
+								
 							}
 						});
 					} else {
@@ -528,6 +540,41 @@ app.post('/support/ticket/update', checkAuth, (req, res) => {
 				const update = { Status: status };
 				ContactForm.findOneAndUpdate(filter, update, function(err, doc) {
 					if (err) return res.status(500).send({ success: false });
+					return res.status(200).send({ success: true });
+				});
+			} else {
+				return res.status(401).send({ success: false });
+			}
+		});
+	}
+});
+
+// ASSIGN TICKET TO AGENT
+app.post('/support/ticket/assign', checkAuth, (req, res) => {
+	var token = req.headers['x-access-token'];
+	let caseNo = req.body.caseNo;
+	let agent = req.body.agent;
+
+	if(agent.length && agent >= 2) {
+		res.status(500).send({ success: false, message: 'invalid agent' }); return;
+	}
+	console.log('POST ASSIGN TICKET ', caseNo);
+	if(typeof caseNo === 'string' && caseNo.length >=5) {
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			if (err) {res.status(401).send({ auth: false, message: 'Failed to authenticate token.' }); return}
+			
+			// Let's perform additional role check here; allow support managers and super admins to assign tickets
+			var userRoles = tokenDecoded.roles;
+			if(userRoles.includes("super_admin") || userRoles.includes("support_super")) {
+				const filter = { caseNo: caseNo };
+				const update = { AssignTo: [agent] };
+				ContactForm.findOneAndUpdate(filter, update, function(err, doc) {
+					if (err) return res.status(500).send({ success: false });
+					if(process.env.SOCKET_ENABLED==="true") {
+						console.log("(SOCKET) Broadcasting ticket was assigned");
+						var message = tokenDecoded.first_name+' '+tokenDecoded.last_name+' Assigned a ticket. What a goof.';
+						//io.emit("ticket assigned", {message: message});
+					}
 					return res.status(200).send({ success: true });
 				});
 			} else {
