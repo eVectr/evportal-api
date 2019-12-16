@@ -77,9 +77,9 @@ if(process.env.SOCKET_ENABLED==="true") {
 				}
 				console.info("(SOCKET) Inserted session in evconnectedusers collection", socket.id);
 				// Convert map to {userId{userObject}}
-				const responseObj = {};
+				const responseObj = {usersObj: {}, whoConnected: tokenDecoded.first_name+' '+tokenDecoded.last_name};
 				for (let [key, value] of connectedClientsMap) {
-					responseObj[key] = value;
+					responseObj['usersObj'][key] = value;
 				}
 				io.emit("device connected", responseObj);
 			});
@@ -112,9 +112,9 @@ if(process.env.SOCKET_ENABLED==="true") {
 						// Update the status for all sessions by UserID (Mongo)
 						ConnectedUser.updateMany({UserId: UserId}, { $set: { status: data.status } }, (error, res) => {
 							console.info("(SOCKET) Updated status for UserId", UserId);
-							const responseObj = {};
+							const responseObj = {usersObj: {}, whoConnected: displayName, status: data.status};
 							for (let [key, value] of connectedClientsMap) {
-								responseObj[key] = value;
+								responseObj['usersObj'][key] = value;
 							}
 							io.emit("device status changed", responseObj);
 						});
@@ -150,6 +150,7 @@ if(process.env.SOCKET_ENABLED==="true") {
 				if(!error) {
 					if(Array.isArray(docs) && docs.length >= 1) {
 						var UserId = docs[0].UserId;
+						var displayName = docs[0].displayName;
 						// Then delete the session from evconnectedusers
 						ConnectedUser.deleteOne({ socketID: socketID }, (error, result) => {
 							if(!error) {
@@ -162,9 +163,9 @@ if(process.env.SOCKET_ENABLED==="true") {
 									if(!error && !docs.length) {
 										connectedClientsMap.delete(UserId);
 										console.info("(SOCKET) Removed user from connectedClientsMap", UserId);
-										const responseObj = {};
+										const responseObj = {usersObj: {}, whoConnected: displayName};
 										for (let [key, value] of connectedClientsMap) {
-											responseObj[key] = value;
+											responseObj['usersObj'][key] = value;
 										}
 										console.info("(SOCKET) Broadcast (emit) new connectedClientsMap");
 										io.emit("device disconnected", responseObj);
@@ -585,6 +586,34 @@ app.post('/support/ticket/assign', checkAuth, (req, res) => {
 });
 
 // ESCALATE TICKET
+app.post('/support/ticket/escalate', checkAuth, (req, res) => {
+	var token = req.headers['x-access-token'];
+	let caseNo = req.body.caseNo;
+	let escalateReason = req.body.escalateReason;
+
+	if(escalateReason.length && escalateReason >= 2) {
+		res.status(500).send({ success: false, message: 'invalid agent' }); return;
+	}
+	console.log('POST ESCALATE TICKET ', caseNo);
+	if(typeof caseNo === 'string' && caseNo.length >=5) {
+		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
+			if (err) {res.status(401).send({ auth: false, message: 'Failed to authenticate token.' }); return}
+			
+			// Let's perform additional role check here; allow support managers and super admins to assign tickets
+			var userRoles = tokenDecoded.roles;
+			if(userRoles.includes("support") || userRoles.includes("support_super")) {
+				const filter = { caseNo: caseNo };
+				const update = { Status: "Escalated", escalateReason: escalateReason };
+				ContactForm.findOneAndUpdate(filter, update, function(err, doc) {
+					if (err) return res.status(500).send({ success: false });
+					return res.status(200).send({ success: true });
+				});
+			} else {
+				return res.status(401).send({ success: false });
+			}
+		});
+	}
+});
 
 // GET SUPPORT AGENTS
 app.get('/getagents', checkAuth, (req, res) => {
