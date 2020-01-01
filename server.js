@@ -413,6 +413,20 @@ app.get('/support/tickets', checkAuth, (req, res) => {
 	});
 });
 
+// GET ALL ESCALATED TICKETS
+app.get('/support/escalations', checkAuth, (req, res) => {
+	console.log("RECEIVED ESCALATIONS GET");
+	ContactForm.find({$or: [{ Status: 'Escalating' },{ Status: 'Escalated' }]}).sort('date').exec(function (err, docs) {
+		if (err) {
+			console.log('error')
+			res.send(err)
+		} else {
+			//console.log(docs)
+			res.send({ success: true, data: JSON.stringify(docs) });
+		}
+	});
+});
+
 // GET SINGLE TICKET
 app.get('/support/ticket', checkAuth, (req, res) => {
 	console.log("GET REQUEST /support/ticket");
@@ -599,11 +613,11 @@ app.post('/support/ticket/escalate', checkAuth, (req, res) => {
 		jwt.verify(token, process.env.JWT_SECRET, function(err, tokenDecoded) {
 			if (err) {res.status(401).send({ auth: false, message: 'Failed to authenticate token.' }); return}
 			
-			// Let's perform additional role check here; allow support managers and super admins to assign tickets
+			// Let's perform additional role check here; allow support managers and support agents to escalate tickets
 			var userRoles = tokenDecoded.roles;
 			if(userRoles.includes("support") || userRoles.includes("support_super")) {
 				const filter = { caseNo: caseNo };
-				const update = { Status: "Escalated", escalateReason: escalateReason };
+				const update = { Status: "Escalating", escalateReason: escalateReason };
 				ContactForm.findOneAndUpdate(filter, update, function(err, doc) {
 					if (err) return res.status(500).send({ success: false });
 					return res.status(200).send({ success: true });
